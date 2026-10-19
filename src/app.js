@@ -20,6 +20,7 @@ export function createApp({
   checkDatabase,
   authRouter = null,
   incidentRouter = null,
+  teamRouter = null,
   sessionMiddleware: sessionHandler = sessionMiddleware,
 }) {
   const app = express();
@@ -64,6 +65,10 @@ if (authRouter) {
 
 if (incidentRouter) {
   app.use("/api/v1", incidentRouter);
+}
+
+if (teamRouter) {
+  app.use('/api/v1/teams', teamRouter)
 }
 
 

@@ -13,6 +13,10 @@ import { createIncidentRepository } from "./modules/incidents/incident.repositor
 import { createIncidentService } from "./modules/incidents/incident.service.js";
 import { createIncidentRouter } from "./modules/incidents/incident.routes.js";
 
+import { createTeamRepository } from './modules/teams/team.repository.js'
+import { createTeamService } from './modules/teams/team.service.js'
+import { createTeamRouter } from './modules/teams/team.routes.js'
+
 
 const authRepository = createAuthRepository(pool);
 const authRouter = createAuthRouter(authRepository);
@@ -25,10 +29,15 @@ const incidentRouter = createIncidentRouter(
   authenticate,
 );
 
+const teamRepository = createTeamRepository(pool)
+const teamService = createTeamService(pool, teamRepository)
+const teamRouter = createTeamRouter(teamService, authenticate)
+
 const app = createApp({
   checkDatabase,
   authRouter,
   incidentRouter,
+  teamRouter,
 });
 const server = http.createServer(app);
 
