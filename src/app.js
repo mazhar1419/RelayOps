@@ -1,11 +1,27 @@
+import cors from "cors";
+
+import { env } from "./config/env.js";
+import { sessionMiddleware } from "./config/session.js";
+import {
+  csrfTokenHandler,
+  requireCsrfToken,
+} from "./middleware/csrf.js";
+
+
 import express from "express";
 import helmet from "helmet";
 import pinoHttp from "pino-http";
 import { randomUUID } from "node:crypto";
 
+
 import { logger } from "./config/logger.js";
 
-export function createApp({ checkDatabase }) {
+export function createApp({
+  checkDatabase,
+  authRouter = null,
+  incidentRouter = null,
+  sessionMiddleware: sessionHandler = sessionMiddleware,
+}) {
   const app = express();
 
   app.disable("x-powered-by");
@@ -30,12 +46,34 @@ export function createApp({ checkDatabase }) {
 
   app.use(express.json({ limit: "1mb" }));
 
+  app.use(cors({
+  origin: env.frontendOrigin,
+  credentials: true,
+}));
+
+
+app.use(sessionHandler);
+app.use(express.json({ limit: "1mb" }));
+
+app.get("/api/v1/auth/csrf", csrfTokenHandler);
+app.use(requireCsrfToken);
+
+if (authRouter) {
+  app.use("/api/v1/auth", authRouter);
+}
+
+if (incidentRouter) {
+  app.use("/api/v1", incidentRouter);
+}
+
+
   app.get("/health", (req, res) => {
     res.status(200).json({
       status: "ok",
       requestId: req.id,
     });
   });
+
 
   app.get("/ready", async (req, res) => {
     try {

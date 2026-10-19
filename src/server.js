@@ -5,7 +5,31 @@ import { logger } from "./config/logger.js";
 import { pool, checkDatabase } from "./db/pool.js";
 import { createApp } from "./app.js";
 
-const app = createApp({ checkDatabase });
+import { createAuthRepository } from "./modules/auth/auth.repository.js";
+import { createAuthRouter } from "./modules/auth/auth.routes.js";
+import { authenticate } from "./middleware/authenticate.js";
+
+import { createIncidentRepository } from "./modules/incidents/incident.repository.js";
+import { createIncidentService } from "./modules/incidents/incident.service.js";
+import { createIncidentRouter } from "./modules/incidents/incident.routes.js";
+
+
+const authRepository = createAuthRepository(pool);
+const authRouter = createAuthRouter(authRepository);
+
+const incidentRepository = createIncidentRepository(pool);
+const incidentService = createIncidentService(pool, incidentRepository);
+
+const incidentRouter = createIncidentRouter(
+  incidentService,
+  authenticate,
+);
+
+const app = createApp({
+  checkDatabase,
+  authRouter,
+  incidentRouter,
+});
 const server = http.createServer(app);
 
 let shuttingDown = false;

@@ -22,6 +22,10 @@ const envSchema = z.object({
   LOG_LEVEL: z
     .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
     .default("info"),
+
+  FRONTEND_ORIGIN: z.string().url(),
+
+  SESSION_SECRET: z.string().min(32),
 });
 
 const result = envSchema.safeParse(process.env);
@@ -39,4 +43,6 @@ export const env = Object.freeze({
   dbPoolMax: result.data.DB_POOL_MAX,
   dbConnectTimeoutMs: result.data.DB_CONNECT_TIMEOUT_MS,
   logLevel: result.data.LOG_LEVEL,
+  frontendOrigin: result.data.FRONTEND_ORIGIN,
+  sessionSecret: result.data.SESSION_SECRET,
 });
