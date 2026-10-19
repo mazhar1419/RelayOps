@@ -21,6 +21,7 @@ export function createApp({
   authRouter = null,
   incidentRouter = null,
   teamRouter = null,
+   webhookRouter = null,
   sessionMiddleware: sessionHandler = sessionMiddleware,
 }) {
   const app = express();
@@ -54,9 +55,15 @@ export function createApp({
 
 
 app.use(sessionHandler);
-app.use(express.json({ limit: "1mb" }));
 
 app.get("/api/v1/auth/csrf", csrfTokenHandler);
+
+// Webhook uses its own secret authentication.
+if (webhookRouter) {
+  app.use("/api/v1/webhooks", webhookRouter);
+}
+
+// CSRF protection for the remaining routes.
 app.use(requireCsrfToken);
 
 if (authRouter) {
@@ -68,9 +75,8 @@ if (incidentRouter) {
 }
 
 if (teamRouter) {
-  app.use('/api/v1/teams', teamRouter)
+  app.use("/api/v1/teams", teamRouter);
 }
-
 
   app.get("/health", (req, res) => {
     res.status(200).json({
@@ -112,6 +118,7 @@ if (teamRouter) {
     });
   });
 
+
   app.use((error, req, res, next) => {
     if (res.headersSent) {
       return next(error);
@@ -134,14 +141,34 @@ if (teamRouter) {
       });
     }
 
-    return res.status(500).json({
+    const status =
+      Number.isInteger(error.status) &&
+      error.status >= 400 &&
+      error.status < 500
+        ? error.status
+        : 500;
+
+    const errorCodes = {
+      400: "BAD_REQUEST",
+      401: "UNAUTHORIZED",
+      403: "FORBIDDEN",
+      404: "NOT_FOUND",
+      409: "CONFLICT",
+      422: "UNPROCESSABLE_ENTITY",
+    };
+
+    return res.status(status).json({
       error: {
-        code: "INTERNAL_ERROR",
-        message: "An unexpected error occurred",
+        code: errorCodes[status] || "INTERNAL_ERROR",
+        message:
+          status < 500
+            ? error.message
+            : "An unexpected error occurred",
       },
       requestId: req.id,
     });
   });
+
 
   return app;
 }

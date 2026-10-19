@@ -17,6 +17,13 @@ import { createTeamRepository } from './modules/teams/team.repository.js'
 import { createTeamService } from './modules/teams/team.service.js'
 import { createTeamRouter } from './modules/teams/team.routes.js'
 
+import { createWebhookRepository } from "./modules/webhooks/webhook.repository.js";
+import { createWebhookService } from "./modules/webhooks/webhook.service.js";
+import { createWebhookRouter } from "./modules/webhooks/webhook.routes.js";
+
+import { createTeamWebhookSecretRepository } from "./modules/teams/team-webhook-secret.repository.js";
+import { createTeamWebhookSecretService } from "./modules/teams/team-webhook-secret.service.js";
+
 
 const authRepository = createAuthRepository(pool);
 const authRouter = createAuthRouter(authRepository);
@@ -33,11 +40,33 @@ const teamRepository = createTeamRepository(pool)
 const teamService = createTeamService(pool, teamRepository)
 const teamRouter = createTeamRouter(teamService, authenticate)
 
+const webhookRepository = createWebhookRepository();
+
+const webhookService = createWebhookService(
+  pool,
+  webhookRepository,
+  incidentRepository,
+);
+
+const teamWebhookSecretRepository =
+  createTeamWebhookSecretRepository();
+
+const teamWebhookSecretService =
+  createTeamWebhookSecretService(
+    pool,
+    teamWebhookSecretRepository,
+  );
+
+const webhookRouter = createWebhookRouter(
+  webhookService,
+  teamWebhookSecretService,
+);
 const app = createApp({
   checkDatabase,
   authRouter,
   incidentRouter,
   teamRouter,
+  webhookRouter,
 });
 const server = http.createServer(app);
 
