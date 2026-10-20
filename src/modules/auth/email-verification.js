@@ -1,4 +1,3 @@
-
 import { createHash, randomInt } from "node:crypto";
 import nodemailer from "nodemailer";
 import { env } from "../../config/env.js";
@@ -48,6 +47,9 @@ function createTransporter() {
     port: mailPort,
     secure: mailEncryption === "ssl",
     requireTLS: mailEncryption === "tls",
+    connectionTimeout: 15000,
+    greetingTimeout: 10000,
+    socketTimeout: 20000,
     auth: {
       user: mailUsername,
       pass: mailPassword,
@@ -55,7 +57,13 @@ function createTransporter() {
   });
 }
 
-async function sendEmail({ to, subject, text, html, errorCode }) {
+async function sendEmail({
+  to,
+  subject,
+  text,
+  html,
+  errorCode,
+}) {
   let transporter;
 
   try {
@@ -71,7 +79,18 @@ async function sendEmail({ to, subject, text, html, errorCode }) {
       text,
       html,
     });
-  } catch {
+  } catch (error) {
+    // Log diagnostic information without logging credentials or OTPs.
+    console.error("Email delivery failed:", {
+      name: error?.name,
+      code: error?.code,
+      command: error?.command,
+      responseCode: error?.responseCode,
+      response: error?.response,
+      message: error?.message,
+      errorCode,
+    });
+
     throw createEmailError(
       "Email provider could not deliver the message. Check SMTP configuration and provider logs.",
       errorCode,
