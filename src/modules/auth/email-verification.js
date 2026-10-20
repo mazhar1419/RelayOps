@@ -1,5 +1,5 @@
 import { createHash, randomInt } from "node:crypto";
-import nodemailer from "nodemailer";
+import { Resend } from "resend";
 import { env } from "../../config/env.js";
 
 export function createVerificationCode() {
@@ -19,42 +19,16 @@ function createEmailError(message, code, status) {
   return error;
 }
 
-function createTransporter() {
-  const {
-    mailHost,
-    mailPort,
-    mailUsername,
-    mailPassword,
-    mailEncryption,
-    mailFromAddress,
-  } = env;
-
-  if (
-    !mailHost ||
-    !mailUsername ||
-    !mailPassword ||
-    !mailFromAddress
-  ) {
+function getResendClient() {
+  if (!env.resendApiKey) {
     throw createEmailError(
-      "Email delivery is not configured. Set MAIL_HOST, MAIL_USERNAME, MAIL_PASSWORD, and MAIL_FROM_ADDRESS.",
+      "Email delivery is not configured. Set RESEND_API_KEY.",
       "EMAIL_DELIVERY_NOT_CONFIGURED",
       503,
     );
   }
 
-  return nodemailer.createTransport({
-    host: mailHost,
-    port: mailPort,
-    secure: mailEncryption === "ssl",
-    requireTLS: mailEncryption === "tls",
-    connectionTimeout: 15000,
-    greetingTimeout: 10000,
-    socketTimeout: 20000,
-    auth: {
-      user: mailUsername,
-      pass: mailPassword,
-    },
-  });
+  return new Resend(env.resendApiKey);
 }
 
 async function sendEmail({
@@ -64,40 +38,56 @@ async function sendEmail({
   html,
   errorCode,
 }) {
-  let transporter;
-
   try {
-    transporter = createTransporter();
+    const resend = getResendClient();
 
-    await transporter.sendMail({
-      from: {
-        name: env.mailFromName || "RelayOps",
-        address: env.mailFromAddress,
-      },
-      to,
+    const { data, error } = await resend.emails.send({
+      from: env.mailFrom || "RelayOps <onboarding@resend.dev>",
+      to: [to],
       subject,
       text,
       html,
     });
+
+    if (error) {
+      console.error("Resend email delivery failed:", {
+        name: error.name,
+        message: error.message,
+        statusCode: error.statusCode,
+        errorCode,
+      });
+
+      throw createEmailError(
+        "Email provider could not deliver the message. Check Resend configuration and provider logs.",
+        errorCode,
+        502,
+      );
+    }
+
+    if (!data?.id) {
+      throw createEmailError(
+        "Email provider did not confirm the email request.",
+        errorCode,
+        502,
+      );
+    }
   } catch (error) {
-    // Log diagnostic information without logging credentials or OTPs.
-    console.error("Email delivery failed:", {
+    if (error?.code === errorCode) {
+      throw error;
+    }
+
+    console.error("Resend request failed:", {
       name: error?.name,
-      code: error?.code,
-      command: error?.command,
-      responseCode: error?.responseCode,
-      response: error?.response,
       message: error?.message,
+      statusCode: error?.statusCode,
       errorCode,
     });
 
     throw createEmailError(
-      "Email provider could not deliver the message. Check SMTP configuration and provider logs.",
+      "Email provider request failed. Check Resend configuration and provider logs.",
       errorCode,
       502,
     );
-  } finally {
-    transporter?.close();
   }
 }
 
