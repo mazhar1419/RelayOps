@@ -65,9 +65,21 @@ export function createTeamService(pool, repository, options = {}) {
   }
 
   // Validate role
-  if (!["member", "admin"].includes(role)) {
-    throw httpError(400, "INVALID_ROLE", "Invalid team member role");
-  }
+if (!["admin", "responder", "viewer"].includes(role)) {
+  throw httpError(
+    400,
+    "INVALID_ROLE",
+    "Role must be admin, responder, or viewer"
+  );
+}
+
+if (role === "admin" && actor.role !== "owner") {
+  throw httpError(
+    403,
+    "INSUFFICIENT_TEAM_PERMISSIONS",
+    "Only the owner can add an admin"
+  );
+}
 
   // Only owner can add admins
   if (role === "admin" && actor.role !== "owner") {
@@ -153,13 +165,41 @@ export function createTeamService(pool, repository, options = {}) {
     invitationPending: true,
   };
 },
-    async updateMemberRole(teamId, actorId, targetId, role) {
-      await requireTeamRole(teamId, actorId, ["owner"]);
-      if (String(actorId) === String(targetId)) throw httpError(400, "CANNOT_CHANGE_OWN_ROLE", "You cannot change your own role");
-      const member = await repository.updateMemberRole(teamId, targetId, role);
-      if (!member) throw httpError(404, "MEMBER_NOT_FOUND", "Member not found or owner role is protected");
-      return member;
-    },
+  async updateMemberRole(teamId, actorId, targetId, role) {
+  await requireTeamRole(teamId, actorId, ["owner"]);
+
+  if (!["admin", "responder", "viewer"].includes(role)) {
+    throw httpError(
+      400,
+      "INVALID_ROLE",
+      "Role must be admin, responder, or viewer"
+    );
+  }
+
+  if (String(actorId) === String(targetId)) {
+    throw httpError(
+      400,
+      "CANNOT_CHANGE_OWN_ROLE",
+      "You cannot change your own role"
+    );
+  }
+
+  const member = await repository.updateMemberRole(
+    teamId,
+    targetId,
+    role
+  );
+
+  if (!member) {
+    throw httpError(
+      404,
+      "MEMBER_NOT_FOUND",
+      "Member not found or owner role is protected"
+    );
+  }
+
+  return member;
+},
     async removeMember(teamId, actorId, targetId) {
       const actor = await requireTeamRole(teamId, actorId, ["owner", "admin"]);
       if (String(actorId) === String(targetId)) throw httpError(400, "CANNOT_REMOVE_SELF", "Use account or workspace management to leave; owners cannot remove themselves here");
