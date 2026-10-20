@@ -37,6 +37,20 @@ See `.env.example` for all supported variables. Never commit `.env`, `.env.test`
 | `cd frontend && npm run build` | Build the frontend for deployment |
 | `cd frontend && npm run lint` | Lint frontend source |
 
+## Free deployment (Render + Neon)
+
+This repository can run the built frontend and API from one Render Web Service, so browser sessions and CSRF requests stay on the same origin. Use a Neon PostgreSQL database.
+
+1. Create a Neon PostgreSQL project and copy its **direct** connection string. Keep it private.
+2. Push this repository to GitHub without `.env` or `.env.test`.
+3. In Render, create a **Web Service** from the repository. Use Node, the root directory, and the Free instance.
+4. Set the build command to `npm ci --include=dev && npm --prefix frontend ci --include=dev && npm --prefix frontend run build`.
+5. Set the start command to `npm run db:migrate:deploy && npm start`.
+6. Add these Render environment variables: `NODE_ENV=production`, `HOST=0.0.0.0`, `DATABASE_URL` (Neon direct URL), `FRONTEND_ORIGIN` (the exact `https://...onrender.com` service URL), `SESSION_SECRET` (new random value of at least 32 characters), `DB_POOL_MAX=5`, `DB_CONNECT_TIMEOUT_MS=10000`, and `LOG_LEVEL=info`.
+7. Deploy. Verify `https://YOUR-SERVICE.onrender.com/`, `/health`, and `/ready`. The root URL should show the retro dashboard and `/ready` should report a connected database.
+
+Generate a session secret locally with `openssl rand -hex 32`. Never commit it or paste it into a public issue. The first deployment may require setting `FRONTEND_ORIGIN` to the URL Render assigns and triggering a redeploy. Render Free services can sleep after inactivity. Database migrations run at service startup; for production changes, review migrations before deployment.
+
 ## API outline
 
 - `GET /health` — process health

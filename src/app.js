@@ -3,11 +3,15 @@ import express from "express";
 import helmet from "helmet";
 import pinoHttp from "pino-http";
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 
 import { env } from "./config/env.js";
 import { logger } from "./config/logger.js";
 import { sessionMiddleware } from "./config/session.js";
 import { csrfTokenHandler, requireCsrfToken } from "./middleware/csrf.js";
+
+const frontendDist = fileURLToPath(new URL("../frontend/dist/", import.meta.url));
+const frontendIndex = fileURLToPath(new URL("../frontend/dist/index.html", import.meta.url));
 
 export function createApp({
   checkDatabase,
@@ -18,6 +22,11 @@ export function createApp({
   sessionMiddleware: sessionHandler = sessionMiddleware,
 }) {
   const app = express();
+
+  if (env.nodeEnv === "production") {
+    // Render terminates HTTPS at its proxy; trust it so secure session cookies work.
+    app.set("trust proxy", 1);
+  }
 
   app.disable("x-powered-by");
   app.use(helmet());
@@ -69,6 +78,22 @@ export function createApp({
       });
     }
   });
+
+  // Unknown API endpoints should remain JSON 404s, not receive the SPA HTML.
+  app.use("/api", (req, res) => res.status(404).json({
+    error: { code: "NOT_FOUND", message: "API route not found" },
+    requestId: req.id,
+  }));
+
+  // In production, serve the built Vite frontend from this same origin.
+  if (env.nodeEnv === "production") {
+    app.use(express.static(frontendDist, { index: false }));
+    app.get("/{*path}", (req, res, next) => {
+      res.sendFile(frontendIndex, (error) => {
+        if (error) next(error);
+      });
+    });
+  }
 
   app.use((req, res) => res.status(404).json({
     error: { code: "NOT_FOUND", message: "Route not found" },
