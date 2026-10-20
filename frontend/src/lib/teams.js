@@ -27,3 +27,22 @@ export function revokeWebhookSecret(teamId) {
     method: 'DELETE',
   })
 }
+
+export function listMembers(teamId) {
+  return apiRequest(`/teams/${encodeURIComponent(teamId)}/members`)
+}
+export function addMember(teamId, email, role) {
+  return apiRequest(`/teams/${encodeURIComponent(teamId)}/members`, { method: 'POST', body: { email, role } })
+}
+export function updateMemberRole(teamId, userId, role) {
+  return apiRequest(`/teams/${encodeURIComponent(teamId)}/members/${encodeURIComponent(userId)}`, { method: 'PATCH', body: { role } })
+}
+export function removeMember(teamId, userId) {
+  return apiRequest(`/teams/${encodeURIComponent(teamId)}/members/${encodeURIComponent(userId)}`, { method: 'DELETE' })
+}
+export function listInvitations(teamId) {
+  return apiRequest(`/teams/${encodeURIComponent(teamId)}/invitations`)
+}
+export function cancelInvitation(teamId, invitationId) {
+  return apiRequest(`/teams/${encodeURIComponent(teamId)}/invitations/${encodeURIComponent(invitationId)}`, { method: 'DELETE' })
+}

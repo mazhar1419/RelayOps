@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import './App.css'
 
-import { register, login, getCurrentUser, logout } from './lib/auth.js'
-import { listTeams, createTeam, rotateWebhookSecret, revokeWebhookSecret } from './lib/teams.js'
+import { register, verifyEmail, resendVerification, login, getCurrentUser, logout } from './lib/auth.js'
+import { listTeams, createTeam, listMembers, listInvitations, cancelInvitation, addMember, updateMemberRole, removeMember, rotateWebhookSecret, revokeWebhookSecret } from './lib/teams.js'
 import { listIncidents, createIncident, updateIncident } from './lib/incidents.js'
 
 const VIEWS = [
   { id: 'overview', label: 'Overview', icon: '▦' },
   { id: 'incidents', label: 'Incidents', icon: '◈' },
+  { id: 'members', label: 'Teammates', icon: '♙' },
   { id: 'webhooks', label: 'Webhooks', icon: '⌁' },
 ]
 
@@ -38,9 +39,15 @@ export default function App() {
   const [user, setUser] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
   const [isRegister, setIsRegister] = useState(false)
+  const [verificationPending, setVerificationPending] = useState(false)
+  const [verificationCode, setVerificationCode] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [teams, setTeams] = useState([])
+  const [members, setMembers] = useState([])
+  const [invitations, setInvitations] = useState([])
+  const [memberEmail, setMemberEmail] = useState('')
+  const [memberRole, setMemberRole] = useState('responder')
   const [teamName, setTeamName] = useState('')
   const [selectedTeam, setSelectedTeam] = useState(null)
   const [incidents, setIncidents] = useState([])
@@ -59,6 +66,18 @@ export default function App() {
   const clearNotices = useCallback(() => {
     setError('')
     setSuccess('')
+  }, [])
+
+  const loadMembers = useCallback(async (team) => {
+    if (!team) return
+    try {
+      const result = await listMembers(team.id)
+      setMembers(Array.isArray(result) ? result : [])
+      if (['owner', 'admin'].includes(team.role)) {
+        const pending = await listInvitations(team.id)
+        setInvitations(Array.isArray(pending) ? pending : [])
+      } else setInvitations([])
+    } catch (err) { setError(err.message || 'Could not load workspace members.') }
   }, [])
 
   useEffect(() => {
@@ -118,20 +137,76 @@ export default function App() {
     setFormLoading(true)
     try {
       const cleanEmail = email.trim().toLowerCase()
-      if (isRegister) await register(cleanEmail, password)
+      if (isRegister) {
+        await register(cleanEmail, password)
+        setVerificationPending(true)
+        setIsRegister(false)
+        setPassword('')
+        setVerificationCode('')
+        setSuccess('Verification code sent. Verify your email, then sign in separately.')
+        return
+      }
       const result = await login(cleanEmail, password)
       setUser(normalizeUser(result))
       const teamResult = await listTeams()
       setTeams(Array.isArray(teamResult) ? teamResult : [])
       setPassword('')
-      setSuccess(isRegister
-        ? 'Account provisioned. Welcome to the operations room.'
-        : 'Authentication accepted. Welcome back.')
+      setSuccess('Authentication accepted. Welcome back.')
     } catch (err) {
+      if (['EMAIL_DELIVERY_NOT_CONFIGURED', 'EMAIL_DELIVERY_FAILED', 'EMAIL_NOT_VERIFIED'].includes(err.code)) setVerificationPending(true)
       setError(err.message || 'Authentication failed.')
     } finally {
       setFormLoading(false)
     }
+  }
+
+  async function handleVerifyEmail(event) {
+    event.preventDefault(); clearNotices(); setFormLoading(true)
+    try {
+      await verifyEmail(email.trim().toLowerCase(), verificationCode.trim())
+      setVerificationPending(false); setVerificationCode(''); setIsRegister(false)
+      setSuccess('Email verified successfully. Sign in with your email and password.')
+    } catch (err) { setError(err.message || 'Could not verify email.') }
+    finally { setFormLoading(false) }
+  }
+
+  async function handleResendVerification() {
+    clearNotices(); setFormLoading(true)
+    try { await resendVerification(email.trim().toLowerCase()); setSuccess('If this account needs verification, a new code has been sent.') }
+    catch (err) { setError(err.message || 'Could not resend verification code.') }
+    finally { setFormLoading(false) }
+  }
+
+  async function handleAddMember(event) {
+    event.preventDefault(); if (!selectedTeam) return
+    clearNotices(); setFormLoading(true)
+    try {
+      const result = await addMember(selectedTeam.id, memberEmail.trim().toLowerCase(), memberRole)
+      setMemberEmail(''); await loadMembers(selectedTeam)
+      setSuccess(result?.invitationPending ? 'Invitation email sent. The teammate will join after creating an account and verifying this email.' : 'Workspace teammate added successfully.')
+    } catch (err) { setError(err.message || 'Could not add teammate.') }
+    finally { setFormLoading(false) }
+  }
+
+  async function handleMemberRoleChange(member, role) {
+    if (!selectedTeam) return
+    clearNotices()
+    try { await updateMemberRole(selectedTeam.id, member.user_id, role); await loadMembers(selectedTeam); setSuccess('Member role updated.') }
+    catch (err) { setError(err.message || 'Could not update member role.') }
+  }
+
+  async function handleCancelInvitation(invitation) {
+    if (!selectedTeam || !window.confirm(`Cancel the invitation for ${invitation.email}?`)) return
+    clearNotices()
+    try { await cancelInvitation(selectedTeam.id, invitation.id); await loadMembers(selectedTeam); setSuccess('Invitation cancelled.') }
+    catch (err) { setError(err.message || 'Could not cancel invitation.') }
+  }
+
+  async function handleRemoveMember(member) {
+    if (!selectedTeam || !window.confirm(`Remove ${member.email} from this workspace?`)) return
+    clearNotices()
+    try { await removeMember(selectedTeam.id, member.user_id); await loadMembers(selectedTeam); setSuccess('Workspace member removed.') }
+    catch (err) { setError(err.message || 'Could not remove member.') }
   }
 
   async function handleLogout() {
@@ -289,17 +364,25 @@ export default function App() {
         <section className="auth-side">
           <div className="auth-mobile-brand"><BrandMark /></div>
           <div className="auth-panel">
-            <div className="auth-heading"><span className="section-kicker">OPERATOR ACCESS / 00{isRegister ? '2' : '1'}</span><h1>{isRegister ? 'Create your operator ID' : 'Welcome back, operator.'}</h1><p>{isRegister ? 'Provision an account to open your operations workspace.' : 'Authenticate to return to your incident command center.'}</p></div>
+            <div className="auth-heading"><span className="section-kicker">OPERATOR ACCESS / {verificationPending ? '003' : isRegister ? '002' : '001'}</span><h1>{verificationPending ? 'Verify your email.' : isRegister ? 'Create your operator ID' : 'Welcome back, operator.'}</h1><p>{verificationPending ? 'Enter the six-digit code we emailed you. Verification does not sign you in; sign in separately afterward.' : isRegister ? 'Create an account. We will send a verification code before your first sign-in.' : 'Authenticate to return to your incident command center.'}</p></div>
             {error && <div className="notice notice-error" role="alert"><span>!</span>{error}</div>}
             {success && <div className="notice notice-success" role="status"><span>✓</span>{success}</div>}
-            <form className="terminal-form" onSubmit={handleAuthSubmit}>
+            <form className="terminal-form" onSubmit={verificationPending ? handleVerifyEmail : handleAuthSubmit}>
               <label htmlFor="email">EMAIL ADDRESS <span>REQUIRED</span></label>
-              <input id="email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="operator@company.com" autoComplete="email" maxLength={254} required />
-              <label htmlFor="password">PASSPHRASE <span>{isRegister ? '12+ CHARACTERS' : 'CONFIDENTIAL'}</span></label>
-              <input id="password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder={isRegister ? 'Create a strong passphrase' : 'Enter your passphrase'} autoComplete={isRegister ? 'new-password' : 'current-password'} minLength={isRegister ? 12 : 1} maxLength={128} required />
-              <button className="button-primary button-full" type="submit" disabled={formLoading}><span>{formLoading ? 'PROCESSING REQUEST…' : isRegister ? 'PROVISION ACCOUNT' : 'ENTER OPERATIONS'}</span><b aria-hidden="true">↗</b></button>
+              <input id="email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="operator@company.com" autoComplete="email" maxLength={254} required readOnly={verificationPending} />
+              {verificationPending ? <>
+                <label htmlFor="verification-code">EMAIL VERIFICATION CODE <span>6 DIGITS · 10 MINUTES</span></label>
+                <input id="verification-code" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} value={verificationCode} onChange={(event) => setVerificationCode(event.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="000000" autoComplete="one-time-code" required />
+                <button className="button-primary button-full" type="submit" disabled={formLoading || verificationCode.length !== 6}><span>{formLoading ? 'VERIFYING…' : 'VERIFY EMAIL'}</span><b aria-hidden="true">✓</b></button>
+                <button className="button-outline button-full verify-resend" type="button" onClick={() => void handleResendVerification()} disabled={formLoading}>RESEND VERIFICATION CODE</button>
+              </> : <>
+                <label htmlFor="password">PASSPHRASE <span>{isRegister ? '12+ CHARACTERS' : 'CONFIDENTIAL'}</span></label>
+                <input id="password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder={isRegister ? 'Create a strong passphrase' : 'Enter your passphrase'} autoComplete={isRegister ? 'new-password' : 'current-password'} minLength={isRegister ? 12 : 1} maxLength={128} required />
+                <button className="button-primary button-full" type="submit" disabled={formLoading}><span>{formLoading ? 'PROCESSING REQUEST…' : isRegister ? 'CREATE ACCOUNT & SEND CODE' : 'ENTER OPERATIONS'}</span><b aria-hidden="true">↗</b></button>
+              </>}
             </form>
-            <div className="auth-switch"><span>{isRegister ? 'ALREADY HAVE AN OPERATOR ID?' : 'NEW TO RELAYOPS?'}</span><button type="button" onClick={() => { setIsRegister((value) => !value); clearNotices() }}>{isRegister ? 'SIGN IN' : 'CREATE ACCOUNT'} <b>→</b></button></div>
+            {!verificationPending && <div className="auth-switch"><span>{isRegister ? 'ALREADY HAVE AN OPERATOR ID?' : 'NEW TO RELAYOPS?'}</span><button type="button" onClick={() => { setIsRegister((value) => !value); clearNotices() }}>{isRegister ? 'SIGN IN' : 'CREATE ACCOUNT'} <b>→</b></button></div>}
+            {verificationPending && <div className="auth-switch"><span>AFTER VERIFICATION</span><button type="button" onClick={() => { setVerificationPending(false); setVerificationCode(''); setIsRegister(false); clearNotices() }}>BACK TO SIGN IN <b>→</b></button></div>}
             <div className="auth-security"><span className="lock-symbol">▣</span><span>SESSION PROTECTED <b>·</b> CSRF VERIFIED <b>·</b> ARGON2 AUTH</span></div>
           </div>
         </section>
@@ -313,7 +396,7 @@ export default function App() {
         <div className="sidebar-brand"><BrandMark /></div>
         <div className="sidebar-label">COMMAND</div>
         <button className={`side-link ${!selectedTeam ? 'active' : ''}`} type="button" onClick={backToWorkspaces}><span className="nav-icon">▦</span><span>Workspaces</span><kbd>01</kbd></button>
-        {selectedTeam && VIEWS.map((item) => <button key={item.id} className={`side-link ${view === item.id ? 'active' : ''}`} type="button" onClick={() => { changeView(item.id); clearNotices(); if (item.id === 'incidents') void loadIncidents(selectedTeam) }}><span className="nav-icon">{item.icon}</span><span>{item.label}</span>{item.id === 'incidents' && <span className="nav-count">{incidents.length}</span>}</button>)}
+        {selectedTeam && VIEWS.map((item) => <button key={item.id} className={`side-link ${view === item.id ? 'active' : ''}`} type="button" onClick={() => { changeView(item.id); clearNotices(); if (item.id === 'incidents') void loadIncidents(selectedTeam); if (item.id === 'members') void loadMembers(selectedTeam) }}><span className="nav-icon">{item.icon}</span><span>{item.label}</span>{item.id === 'incidents' && <span className="nav-count">{incidents.length}</span>}</button>)}
         <div className="sidebar-divider" />
         <div className="sidebar-label sidebar-label-row"><span>YOUR WORKSPACES</span><span>{teams.length.toString().padStart(2, '0')}</span></div>
         <div className="sidebar-teams">
@@ -339,7 +422,7 @@ export default function App() {
           ) : (
             <>
               <div className="page-heading team-page-heading"><div><span className="section-kicker">TEAM-{String(selectedTeam.id).padStart(4, '0')} / {view.toUpperCase()}</span><h1>{selectedTeam.name}<em>.</em></h1><p>Incident response workspace <span className="heading-separator">/</span> <span className="mono-text">CREATED {formatDate(selectedTeam.created_at)}</span></p></div><button className="button-outline back-button" type="button" onClick={backToWorkspaces}>← ALL WORKSPACES</button></div>
-              <nav className="view-tabs" aria-label="Workspace sections">{VIEWS.map((item) => <button key={item.id} className={view === item.id ? 'active' : ''} type="button" onClick={() => { changeView(item.id); clearNotices(); if (item.id === 'incidents') void loadIncidents(selectedTeam) }}><span>{item.icon}</span>{item.label.toUpperCase()}{item.id === 'incidents' && <b>{incidents.length}</b>}</button>)}</nav>
+              <nav className="view-tabs" aria-label="Workspace sections">{VIEWS.map((item) => <button key={item.id} className={view === item.id ? 'active' : ''} type="button" onClick={() => { changeView(item.id); clearNotices(); if (item.id === 'incidents') void loadIncidents(selectedTeam); if (item.id === 'members') void loadMembers(selectedTeam) }}><span>{item.icon}</span>{item.label.toUpperCase()}{item.id === 'incidents' && <b>{incidents.length}</b>}</button>)}</nav>
 
               {view === 'overview' && <>
                 <div className="stats-grid"><div className="stat-card"><span className="metric-label">TOTAL INCIDENTS</span><strong>{String(stats.total).padStart(2, '0')}</strong><small>ALL RECORDED EVENTS</small><span className="stat-glyph">◈</span></div><div className="stat-card"><span className="metric-label">OPEN QUEUE</span><strong>{String(stats.open).padStart(2, '0')}</strong><small>AWAITING ACTION</small><span className="stat-glyph stat-glyph-amber">⌁</span></div><div className="stat-card"><span className="metric-label">ACKNOWLEDGED</span><strong>{String(stats.active).padStart(2, '0')}</strong><small>RESPONSE IN PROGRESS</small><span className="stat-glyph stat-glyph-blue">◉</span></div><div className="stat-card stat-card-critical"><span className="metric-label">CRITICAL ACTIVE</span><strong>{String(stats.critical).padStart(2, '0')}</strong><small>REQUIRES ATTENTION</small><span className="stat-glyph">!</span></div></div>
@@ -347,6 +430,8 @@ export default function App() {
               </>}
 
               {view === 'incidents' && <div className="content-grid incidents-layout"><section className="panel create-incident-panel"><div className="panel-head"><div><span className="section-kicker">01 / NEW RECORD</span><h2>Log an incident</h2></div><span className="panel-code">INC:NEW</span></div><form className="terminal-form" onSubmit={handleCreateIncident}><label htmlFor="incident-title">INCIDENT TITLE <span>REQUIRED</span></label><input id="incident-title" type="text" value={incidentTitle} onChange={(event) => setIncidentTitle(event.target.value)} placeholder="e.g. API latency above threshold" maxLength={255} required /><label htmlFor="incident-description">DETAILS <span>OPTIONAL</span></label><textarea id="incident-description" value={incidentDescription} onChange={(event) => setIncidentDescription(event.target.value)} placeholder="What happened? What is affected?" rows={4} maxLength={5000} /><label htmlFor="incident-severity">SEVERITY LEVEL</label><select id="incident-severity" value={incidentSeverity} onChange={(event) => setIncidentSeverity(event.target.value)}><option value="low">LOW — MINOR IMPACT</option><option value="medium">MEDIUM — DEGRADED SERVICE</option><option value="high">HIGH — MAJOR IMPACT</option><option value="critical">CRITICAL — SERVICE DOWN</option></select><button className="button-primary button-full" type="submit" disabled={formLoading}><span>{formLoading ? 'RECORDING…' : 'LOG INCIDENT'}</span><b>＋</b></button></form></section><section className="panel incidents-panel"><div className="panel-head"><div><span className="section-kicker">02 / INCIDENT REGISTER</span><h2>Response queue <span className="heading-count">{incidents.length}</span></h2></div><button type="button" className="button-outline small-button" disabled={incidentsLoading} onClick={() => void loadIncidents(selectedTeam)}>↻ REFRESH</button></div>{incidentsLoading ? <div className="empty-state"><b>SYNCING INCIDENT REGISTER…</b></div> : incidents.length === 0 ? <div className="empty-state"><span className="empty-symbol">◈</span><b>QUEUE EMPTY</b><p>All quiet. Log an incident to begin tracking response.</p></div> : <div className="incident-table-wrap"><table className="incident-table"><thead><tr><th>INCIDENT</th><th>SEVERITY</th><th>STATUS / ACTION</th></tr></thead><tbody>{incidents.map((incident) => <tr key={incident.id}><td><div className="incident-title-cell"><span className={`severity-mark severity-mark-${incident.severity}`} /><div><b>{incident.title}</b><small>INC-{String(incident.id).padStart(5, '0')} · {formatDate(incident.created_at)}</small>{incident.description && <p>{incident.description}</p>}</div></div></td><td><StatusPill value={incident.severity} /></td><td><select aria-label={`Status for incident ${incident.id}`} className={`status-select status-select-${incident.status}`} value={incident.status} onChange={(event) => void handleIncidentStatusChange(incident, event.target.value)}><option value="open">OPEN</option><option value="acknowledged">ACKNOWLEDGED</option><option value="resolved">RESOLVED</option></select></td></tr>)}</tbody></table></div>}</section></div>}
+
+              {view === 'members' && <div className="content-grid incidents-layout"><section className="panel create-incident-panel"><div className="panel-head"><div><span className="section-kicker">01 / TEAM ACCESS</span><h2>Add a teammate</h2></div><span className="panel-code">TEAM:ADD</span></div><p className="panel-description">Add an existing, email-verified RelayOps account to this workspace. The person must register and verify their email first.</p><form className="terminal-form" onSubmit={handleAddMember}><label htmlFor="member-email">ACCOUNT EMAIL <span>VERIFIED ACCOUNT REQUIRED</span></label><input id="member-email" type="email" value={memberEmail} onChange={(event) => setMemberEmail(event.target.value)} placeholder="teammate@company.com" maxLength={254} required /><label htmlFor="member-role">WORKSPACE ROLE</label><select id="member-role" value={memberRole} onChange={(event) => setMemberRole(event.target.value)}><option value="responder">RESPONDER — manage incidents</option><option value="viewer">VIEWER — read access</option>{selectedTeam.role === 'owner' && <option value="admin">ADMIN — manage workspace settings</option>}</select><button className="button-primary button-full" type="submit" disabled={formLoading || !['owner', 'admin'].includes(selectedTeam.role)}><span>{formLoading ? 'ADDING…' : 'ADD TEAMMATE'}</span><b>＋</b></button></form>{!['owner', 'admin'].includes(selectedTeam.role) && <p className="permission-note">Only workspace owners and admins can add teammates.</p>}</section><section className="panel incidents-panel"><div className="panel-head"><div><span className="section-kicker">02 / MEMBERSHIP</span><h2>Workspace teammates <span className="heading-count">{members.length}</span></h2></div><button type="button" className="button-outline small-button" onClick={() => void loadMembers(selectedTeam)}>↻ REFRESH</button></div>{members.length === 0 ? <div className="empty-state"><b>NO MEMBERS LOADED</b><p>Refresh to load workspace membership.</p></div> : <div className="incident-table-wrap"><table className="incident-table"><thead><tr><th>ACCOUNT</th><th>ROLE</th><th>ACTION</th></tr></thead><tbody>{members.map((member) => <tr key={member.user_id}><td><div className="incident-title-cell"><span className="team-monogram">{member.email.slice(0,1).toUpperCase()}</span><div><b>{member.email}</b><small>USER-{member.user_id} · JOINED {formatDate(member.joined_at)}</small></div></div></td><td>{member.role === 'owner' ? <StatusPill value="owner" /> : selectedTeam.role === 'owner' ? <select aria-label={`Role for ${member.email}`} className="status-select" value={member.role} onChange={(event) => void handleMemberRoleChange(member, event.target.value)}><option value="admin">ADMIN</option><option value="responder">RESPONDER</option><option value="viewer">VIEWER</option></select> : <StatusPill value={member.role} />}</td><td>{member.role !== 'owner' && (selectedTeam.role === 'owner' || (selectedTeam.role === 'admin' && member.role !== 'admin')) && <button className="button-danger" type="button" onClick={() => void handleRemoveMember(member)}>REMOVE</button>}</td></tr>)}</tbody></table></div>}{['owner', 'admin'].includes(selectedTeam.role) && <div className="pending-invitations"><div className="panel-head"><div><span className="section-kicker">03 / PENDING INVITATIONS</span><h2>Awaiting verification <span className="heading-count">{invitations.length}</span></h2></div></div>{invitations.length === 0 ? <p className="panel-description">No pending invitations.</p> : invitations.map((invitation) => <div className="workspace-row invitation-row" key={invitation.id}><div className="workspace-info"><h3>{invitation.email}</h3><p>{invitation.role.toUpperCase()} · EXPIRES {formatDate(invitation.expires_at)}</p></div><button className="button-danger" type="button" onClick={() => void handleCancelInvitation(invitation)}>CANCEL</button></div>)}</div>}<div className="note-box"><span>i</span><p>Owners cannot be removed or demoted here. Invitations expire after seven days and are accepted only when the invited email address is verified.</p></div></section></div>}
 
               {view === 'webhooks' && <div className="content-grid webhook-layout"><section className="panel webhook-intro"><div className="panel-head"><div><span className="section-kicker">01 / EVENT INGESTION</span><h2>Webhook gateway</h2></div><span className="panel-code">API:HOOK</span></div><div className="webhook-illustration"><div className="webhook-node">SOURCE</div><div className="webhook-connector"><span>HTTPS / POST</span><i /></div><div className="webhook-node webhook-node-core">RELAYOPS</div><div className="webhook-connector"><span>VALIDATE + DEDUPE</span><i /></div><div className="webhook-node">INCIDENT</div></div><p className="panel-description">Receive external monitoring events and create incidents automatically. Each workspace has its own secret; only its hash is stored by the API.</p><div className="endpoint-box"><span>ENDPOINT</span><code>POST /api/v1/webhooks/{selectedTeam.id}/events</code><button type="button" onClick={async () => { try { await navigator.clipboard.writeText(`${window.location.origin}/api/v1/webhooks/${selectedTeam.id}/events`); setSuccess('Endpoint URL copied.') } catch { setError('Could not access clipboard.') } }}>COPY URL</button></div><div className="payload-example"><div><span>REQUEST HEADER</span><code>x-webhook-secret: YOUR_TEAM_SECRET</code></div><div><span>REQUIRED FIELDS</span><code>source · externalEventId · title</code></div><div><span>SUPPORTED SEVERITY</span><code>low · medium · high · critical</code></div></div></section><section className="panel secret-panel"><div className="panel-head"><div><span className="section-kicker">02 / CREDENTIALS</span><h2>Team secret</h2></div><span className="secure-badge"><i /> PRIVATE</span></div><div className="secret-warning"><span>!</span><p><b>Secret visibility is one-time only.</b> Rotate to issue a new secret. The previous secret becomes invalid immediately.</p></div>{webhookSecret ? <div className="secret-reveal"><label htmlFor="new-secret">NEW SECRET — COPY AND STORE IT</label><textarea id="new-secret" readOnly value={webhookSecret} rows={3} onFocus={(event) => event.target.select()} /><button className="button-primary button-full" type="button" onClick={() => void handleCopySecret()}><span>{copied ? 'COPIED TO CLIPBOARD' : 'COPY SECRET'}</span><b>{copied ? '✓' : '▣'}</b></button><p className="secret-note">This secret will disappear from the screen when you navigate away. Store it securely before leaving.</p></div> : <div className="secret-placeholder"><span>••••••••••••••••••••••••••••••••</span><small>SECRET VALUE NOT AVAILABLE FOR DISPLAY</small></div>}<div className="secret-actions"><button type="button" className="button-primary" disabled={secretAction || !['owner', 'admin'].includes(selectedTeam.role)} onClick={() => void handleRotateSecret()}><span>{secretAction ? 'WORKING…' : 'ROTATE SECRET'}</span><b>↻</b></button><button type="button" className="button-danger" disabled={secretAction || !['owner', 'admin'].includes(selectedTeam.role)} onClick={() => void handleRevokeSecret()}>REVOKE SECRET</button></div>{!['owner', 'admin'].includes(selectedTeam.role) && <p className="permission-note">Only workspace owners and admins can manage webhook secrets.</p>}<div className="security-footnote"><span>▣</span><p>Never paste a production secret into source control, logs, issue trackers, or client-side code. Use your provider’s encrypted secret store.</p></div></section></div>}
               <footer className="stage-footer"><span>RELAYOPS OPERATIONS SYSTEM <b>© 2026</b></span><span>TEAM-{String(selectedTeam.id).padStart(4, '0')} <b>·</b> PRIVATE CONTROL SPACE</span></footer>

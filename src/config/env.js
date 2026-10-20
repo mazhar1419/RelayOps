@@ -26,6 +26,18 @@ const envSchema = z.object({
   FRONTEND_ORIGIN: z.string().url(),
 
   SESSION_SECRET: z.string().min(32),
+
+  RESEND_API_KEY: z.string().default(""),
+
+  MAIL_FROM: z.string().default(""),
+
+  MAIL_HOST: z.string().default(""),
+MAIL_PORT: z.coerce.number().int().min(1).max(65535).default(587),
+MAIL_USERNAME: z.string().default(""),
+MAIL_PASSWORD: z.string().default(""),
+MAIL_ENCRYPTION: z.enum(["tls", "ssl"]).default("tls"),
+MAIL_FROM_ADDRESS: z.string().default(""),
+MAIL_FROM_NAME: z.string().default("RelayOps"),
 });
 
 const result = envSchema.safeParse(process.env);
@@ -45,4 +57,13 @@ export const env = Object.freeze({
   logLevel: result.data.LOG_LEVEL,
   frontendOrigin: result.data.FRONTEND_ORIGIN,
   sessionSecret: result.data.SESSION_SECRET,
+  resendApiKey: result.data.RESEND_API_KEY,
+  mailFrom: result.data.MAIL_FROM,
+  mailHost: result.data.MAIL_HOST,
+mailPort: result.data.MAIL_PORT,
+mailUsername: result.data.MAIL_USERNAME,
+mailPassword: result.data.MAIL_PASSWORD,
+mailEncryption: result.data.MAIL_ENCRYPTION,
+mailFromAddress: result.data.MAIL_FROM_ADDRESS,
+mailFromName: result.data.MAIL_FROM_NAME,
 });

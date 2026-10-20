@@ -46,7 +46,7 @@ This repository can run the built frontend and API from one Render Web Service, 
 3. In Render, create a **Web Service** from the repository. Use Node, the root directory, and the Free instance.
 4. Set the build command to `npm ci --include=dev && npm --prefix frontend ci --include=dev && npm --prefix frontend run build`.
 5. Set the start command to `npm run db:migrate:deploy && npm start`.
-6. Add these Render environment variables: `NODE_ENV=production`, `HOST=0.0.0.0`, `DATABASE_URL` (Neon direct URL), `FRONTEND_ORIGIN` (the exact `https://...onrender.com` service URL), `SESSION_SECRET` (new random value of at least 32 characters), `DB_POOL_MAX=5`, `DB_CONNECT_TIMEOUT_MS=10000`, and `LOG_LEVEL=info`.
+6. Add these Render environment variables: `NODE_ENV=production`, `HOST=0.0.0.0`, `DATABASE_URL` (Neon direct URL), `FRONTEND_ORIGIN` (the exact `https://...onrender.com` service URL), `SESSION_SECRET` (new random value of at least 32 characters), `DB_POOL_MAX=5`, `DB_CONNECT_TIMEOUT_MS=10000`, and `LOG_LEVEL=info`. For email verification, also configure `RESEND_API_KEY` and `MAIL_FROM` using a Resend account and a verified sender domain; registration intentionally does not create a login session.
 7. Deploy. Verify `https://YOUR-SERVICE.onrender.com/`, `/health`, and `/ready`. The root URL should show the retro dashboard and `/ready` should report a connected database.
 
 Generate a session secret locally with `openssl rand -hex 32`. Never commit it or paste it into a public issue. The first deployment may require setting `FRONTEND_ORIGIN` to the URL Render assigns and triggering a redeploy. Render Free services can sleep after inactivity. Database migrations run at service startup; for production changes, review migrations before deployment.
@@ -56,11 +56,18 @@ Generate a session secret locally with `openssl rand -hex 32`. Never commit it o
 - `GET /health` — process health
 - `GET /ready` — database readiness
 - `GET /api/v1/auth/csrf` — initialize/get the session CSRF token
-- `POST /api/v1/auth/register` — create an account (12–128 character password)
+- `POST /api/v1/auth/register` — create an unverified account and email a six-digit OTP (12–128 character password)
+- `POST /api/v1/auth/verify-email` — verify the OTP (10-minute expiry, five-attempt limit)
+- `POST /api/v1/auth/resend-verification` — resend a verification OTP
 - `POST /api/v1/auth/login` — authenticate and rotate the session ID
 - `GET /api/v1/auth/me` — current session user
 - `POST /api/v1/auth/logout` — destroy the session
 - `GET /api/v1/teams` / `POST /api/v1/teams` — list/create teams
+- `GET /api/v1/teams/:teamId/members` — list workspace members
+- `POST /api/v1/teams/:teamId/members` — add an existing verified user or email an invitation (owner/admin)
+- `GET /api/v1/teams/:teamId/invitations` / `DELETE /api/v1/teams/:teamId/invitations/:invitationId` — list/cancel pending invitations (owner/admin)
+- `PATCH /api/v1/teams/:teamId/members/:userId` — change role (owner only)
+- `DELETE /api/v1/teams/:teamId/members/:userId` — remove a member (owner/admin, protected role rules)
 - `/api/v1/teams/:teamId/incidents` — list/create incidents
 - `/api/v1/teams/:teamId/incidents/:incidentId` — retrieve/update an incident
 - `POST /api/v1/teams/:teamId/webhook-secret` — rotate a team secret (owner/admin only; plaintext returned once)
