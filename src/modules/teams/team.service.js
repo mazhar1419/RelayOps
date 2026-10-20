@@ -44,27 +44,115 @@ export function createTeamService(pool, repository, options = {}) {
       if (!cancelled) throw httpError(404, "INVITATION_NOT_FOUND", "Invitation not found");
       return { cancelled: true, invitationId };
     },
-    async addMember(teamId, actorId, email, role) {
-      const actor = await requireTeamRole(teamId, actorId, ["owner", "admin"]);
-      if (role === "admin" && actor.role !== "owner") throw httpError(403, "INSUFFICIENT_TEAM_PERMISSIONS", "Only the owner can add an admin");
-      const normalizedEmail = email.toLowerCase();
-      const user = await repository.findVerifiedUserByEmail(normalizedEmail);
-      if (!user) {
-        const invitation = await repository.createInvitation(teamId, normalizedEmail, role, actorId);
-        try {
-          await sendInvitationEmail(normalizedEmail, actor.name, role);
-        } catch (error) {
-          error.message = "Invitation saved, but the email could not be delivered. Check Resend configuration and retry adding this email.";
-          throw error;
-        }
-        return { ...invitation, invitationPending: true };
+  async addMember(teamId, actorId, email, role) {
+  const actor = await requireTeamRole(
+    teamId,
+    actorId,
+    ["owner", "admin"]
+  );
+
+  // Validate email
+  if (typeof email !== "string" || !email.trim()) {
+    throw httpError(400, "INVALID_EMAIL", "A valid email is required");
+  }
+
+  const normalizedEmail = email.trim().toLowerCase();
+
+  const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  if (!emailPattern.test(normalizedEmail)) {
+    throw httpError(400, "INVALID_EMAIL", "Please provide a valid email");
+  }
+
+  // Validate role
+  if (!["member", "admin"].includes(role)) {
+    throw httpError(400, "INVALID_ROLE", "Invalid team member role");
+  }
+
+  // Only owner can add admins
+  if (role === "admin" && actor.role !== "owner") {
+    throw httpError(
+      403,
+      "INSUFFICIENT_TEAM_PERMISSIONS",
+      "Only the owner can add an admin"
+    );
+  }
+
+  // Check if the email belongs to an existing verified user
+  const user = await repository.findVerifiedUserByEmail(normalizedEmail);
+
+  if (user) {
+    // Prevent duplicate membership before attempting insertion
+    const members = await repository.listMembers(teamId);
+
+    const alreadyMember = members.some(
+      (member) => String(member.user_id) === String(user.id)
+    );
+
+    if (alreadyMember) {
+      throw httpError(
+        409,
+        "MEMBER_ALREADY_EXISTS",
+        "This user is already a team member"
+      );
+    }
+
+    try {
+      return await repository.addMembership(teamId, user.id, role);
+    } catch (error) {
+      if (error.code === "23505") {
+        throw httpError(
+          409,
+          "MEMBER_ALREADY_EXISTS",
+          "This user is already a team member"
+        );
       }
-      try { return await repository.addMembership(teamId, user.id, role); }
-      catch (error) {
-        if (error.code === "23505") throw httpError(409, "MEMBER_ALREADY_EXISTS", "This user is already a workspace member");
-        throw error;
-      }
-    },
+
+      throw error;
+    }
+  }
+
+  // User is not registered or has not verified their email.
+  // Create an invitation for them.
+  const invitation = await repository.createInvitation(
+    teamId,
+    normalizedEmail,
+    role,
+    actorId
+  );
+
+  try {
+    await sendInvitationEmail(
+      normalizedEmail,
+      actor.name,
+      role
+    );
+  } catch (error) {
+    // Best-effort cleanup to avoid leaving an unusable invitation.
+    try {
+      await repository.cancelInvitation(teamId, invitation.id);
+    } catch {
+      // Preserve the original email delivery error.
+    }
+
+    console.error("Team invitation email delivery failed", {
+      teamId,
+      invitationId: invitation.id,
+      error: error.message,
+    });
+
+    throw httpError(
+      502,
+      "INVITATION_EMAIL_FAILED",
+      "The invitation email could not be delivered. Please retry."
+    );
+  }
+
+  return {
+    ...invitation,
+    invitationPending: true,
+  };
+},
     async updateMemberRole(teamId, actorId, targetId, role) {
       await requireTeamRole(teamId, actorId, ["owner"]);
       if (String(actorId) === String(targetId)) throw httpError(400, "CANNOT_CHANGE_OWN_ROLE", "You cannot change your own role");
