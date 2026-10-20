@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 
 import { createApp } from "../src/app.js";
-import { createWebhookRouter } from "../src/modules/webhooks/webhook.routes.js";
+import { createWebhookRateLimiter, createWebhookRouter } from "../src/modules/webhooks/webhook.routes.js";
 
 const SECRET = "test-webhook-secret-at-least-32-chars";
 
@@ -127,6 +127,27 @@ describe("Webhook HTTP API", () => {
         payload: expect.objectContaining(validPayload),
       }),
     );
+  });
+
+  it("rate-limits repeated webhook requests", async () => {
+    const service = { receive: vi.fn() };
+    const secretService = { verify: vi.fn().mockResolvedValue(false) };
+    const webhookRouter = createWebhookRouter(service, secretService, {
+      limiter: createWebhookRateLimiter({ limit: 1, windowMs: 60_000 }),
+    });
+    const app = createApp({
+      checkDatabase: vi.fn().mockResolvedValue(undefined),
+      webhookRouter,
+      sessionMiddleware: (_req, _res, next) => next(),
+    });
+
+    const first = await request(app).post("/api/v1/webhooks/1/events").send(validPayload);
+    const second = await request(app).post("/api/v1/webhooks/1/events").send(validPayload);
+
+    expect(first.status).toBe(401);
+    expect(second.status).toBe(429);
+    expect(second.body.error.code).toBe("WEBHOOK_RATE_LIMITED");
+    expect(secretService.verify).toHaveBeenCalledOnce();
   });
 
   it("returns 200 for a duplicate event", async () => {

@@ -1,4 +1,3 @@
-
 import { apiRequest } from './api.js'
 
 export function listTeams() {
@@ -14,4 +13,17 @@ export function createTeam(name) {
 
 export function getTeam(teamId) {
   return apiRequest(`/teams/${encodeURIComponent(teamId)}`)
+}
+
+export function rotateWebhookSecret(teamId) {
+  return apiRequest(`/teams/${encodeURIComponent(teamId)}/webhook-secret`, {
+    method: 'POST',
+    body: {},
+  })
+}
+
+export function revokeWebhookSecret(teamId) {
+  return apiRequest(`/teams/${encodeURIComponent(teamId)}/webhook-secret`, {
+    method: 'DELETE',
+  })
 }

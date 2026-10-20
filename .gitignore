@@ -1,5 +1,9 @@
-node`_modules/
+node_modules/
 .env
-.env.test
+.env.*
+!.env.example
+!.env.test.example
 coverage/
+dist/
 *.log
+.DS_Store

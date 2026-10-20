@@ -1,7 +1,7 @@
 {
   "name": "relayops",
   "version": "1.0.0",
-  "description": "",
+  "description": "Team-based incident response API and retro operations dashboard",
   "main": "index.js",
   "type": "module",
   "scripts": {
@@ -9,12 +9,21 @@
     "start": "node --env-file=.env src/server.js",
     "test": "node --env-file=.env.test ./node_modules/vitest/vitest.mjs run",
     "test:watch": "node --env-file=.env.test ./node_modules/vitest/vitest.mjs",
-    "db:migrate": "node --env-file=.env src/db/migrate.js"
+    "db:migrate": "node --env-file=.env src/db/migrate.js",
+    "check": "node --check src/server.js && node --check src/app.js",
+    "test:unit": "node --env-file=.env.test ./node_modules/vitest/vitest.mjs run tests/auth.test.js tests/health.test.js tests/incident-audit.test.js tests/incident-authorization.test.js tests/incident-http-authorization.test.js tests/incident-integrity.test.js tests/team-webhook-secret-http.test.js tests/webhook-http.test.js tests/webhook-service.test.js"
   },
   "engines": {
     "node": ">=22"
   },
-  "keywords": [],
+  "keywords": [
+    "incident-response",
+    "webhooks",
+    "express",
+    "postgresql",
+    "react",
+    "operations-dashboard"
+  ],
   "author": "",
   "license": "ISC",
   "dependencies": {

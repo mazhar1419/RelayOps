@@ -1,47 +1,68 @@
-
 export function createTeamService(pool, repository) {
   return {
     async create(name, userId) {
-      const client = await pool.connect()
+      const client = await pool.connect();
 
       try {
-        await client.query('BEGIN')
+        await client.query("BEGIN");
 
-        const team = await repository.create(client, name, userId)
+        const team = await repository.create(client, name, userId);
 
         await repository.addMember(
           client,
           team.id,
           userId,
-          'owner',
-        )
+          "owner",
+        );
 
-        await client.query('COMMIT')
+        await client.query("COMMIT");
 
-        return { ...team, role: 'owner' }
+        return { ...team, role: "owner" };
       } catch (error) {
-        await client.query('ROLLBACK')
-        throw error
+        await client.query("ROLLBACK");
+        throw error;
       } finally {
-        client.release()
+        client.release();
       }
     },
 
     async list(userId) {
-      return repository.listForUser(userId)
+      return repository.listForUser(userId);
     },
 
     async get(teamId, userId) {
-      const team = await repository.findForUser(teamId, userId)
+      const team = await repository.findForUser(teamId, userId);
 
       if (!team) {
-        const error = new Error('Team not found')
-        error.status = 404
-        error.code = 'TEAM_NOT_FOUND'
-        throw error
+        const error = new Error("Team not found");
+        error.status = 404;
+        error.code = "TEAM_NOT_FOUND";
+        throw error;
       }
 
-      return team
+      return team;
     },
-  }
+
+    async requireWebhookSecretPermission(teamId, userId) {
+      const team = await repository.findForUser(teamId, userId);
+
+      if (!team) {
+        const error = new Error("Team not found");
+        error.status = 404;
+        error.code = "TEAM_NOT_FOUND";
+        throw error;
+      }
+
+      if (!["owner", "admin"].includes(team.role)) {
+        const error = new Error(
+          "You do not have permission to manage webhook secrets",
+        );
+        error.status = 403;
+        error.code = "INSUFFICIENT_TEAM_PERMISSIONS";
+        throw error;
+      }
+
+      return team;
+    },
+  };
 }

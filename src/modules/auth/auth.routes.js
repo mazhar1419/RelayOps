@@ -9,6 +9,15 @@ const loginLimiter = rateLimit({
   limit: 10,
   standardHeaders: "draft-8",
   legacyHeaders: false,
+  message: { error: { code: "LOGIN_RATE_LIMITED", message: "Too many login attempts. Try again later." } },
+});
+
+const registerLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 5,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: { error: { code: "REGISTRATION_RATE_LIMITED", message: "Too many account creation attempts. Try again later." } },
 });
 
 function regenerateSession(req) {
@@ -32,7 +41,7 @@ function saveSession(req) {
 export function createAuthRouter(repository) {
   const router = Router();
 
-  router.post("/register", async (req, res, next) => {
+  router.post("/register", registerLimiter, async (req, res, next) => {
     try {
       const parsed = registerSchema.safeParse(req.body);
 

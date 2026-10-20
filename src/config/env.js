@@ -25,8 +25,6 @@ const envSchema = z.object({
 
   FRONTEND_ORIGIN: z.string().url(),
 
-  WEBHOOK_SECRET: z.string().min(32),
-
   SESSION_SECRET: z.string().min(32),
 });
 
@@ -46,6 +44,5 @@ export const env = Object.freeze({
   dbConnectTimeoutMs: result.data.DB_CONNECT_TIMEOUT_MS,
   logLevel: result.data.LOG_LEVEL,
   frontendOrigin: result.data.FRONTEND_ORIGIN,
-  webhookSecret: result.data.WEBHOOK_SECRET,
   sessionSecret: result.data.SESSION_SECRET,
 });
