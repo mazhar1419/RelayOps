@@ -1,3 +1,4 @@
+
 import { createHash, randomInt } from "node:crypto";
 import { Resend } from "resend";
 import { env } from "../../config/env.js";
@@ -12,89 +13,103 @@ export function hashVerificationCode(email, code) {
     .digest("hex");
 }
 
-function createEmailError(message, code, status) {
-  const error = new Error(message);
+function createEmailError(message, code, status, cause) {
+  const error = new Error(message, cause ? { cause } : undefined);
   error.code = code;
   error.status = status;
   return error;
 }
 
-function getResendClient() {
+function getResendClient(errorCode) {
   if (!env.resendApiKey) {
     throw createEmailError(
-      "Email delivery is not configured. Set RESEND_API_KEY.",
+      "Email delivery is not configured. Set RESEND_API_KEY in the deployment environment.",
       "EMAIL_DELIVERY_NOT_CONFIGURED",
       503,
     );
   }
 
-  return new Resend(env.resendApiKey);
+  try {
+    return new Resend(env.resendApiKey);
+  } catch (cause) {
+    throw createEmailError(
+      "Could not initialize the email provider.",
+      errorCode,
+      502,
+      cause,
+    );
+  }
 }
 
-async function sendEmail({
-  to,
-  subject,
-  text,
-  html,
-  errorCode,
-}) {
-  try {
-    const resend = getResendClient();
+async function sendEmail({ to, subject, text, html, errorCode }) {
+  const resend = getResendClient(errorCode);
+  const from = env.mailFrom || "RelayOps <onboarding@resend.dev>";
 
-    const { data, error } = await resend.emails.send({
-      from: env.mailFrom || "RelayOps <onboarding@resend.dev>",
+  let result;
+
+  try {
+    result = await resend.emails.send({
+      from,
       to: [to],
       subject,
       text,
       html,
     });
-
-    if (error) {
-      console.error("Resend email delivery failed:", {
-        name: error.name,
-        message: error.message,
-        statusCode: error.statusCode,
-        errorCode,
-      });
-
-      throw createEmailError(
-        "Email provider could not deliver the message. Check Resend configuration and provider logs.",
-        errorCode,
-        502,
-      );
-    }
-
-    if (!data?.id) {
-      throw createEmailError(
-        "Email provider did not confirm the email request.",
-        errorCode,
-        502,
-      );
-    }
-  } catch (error) {
-    if (error?.code === errorCode) {
-      throw error;
-    }
-
-    console.error("Resend request failed:", {
-      name: error?.name,
-      message: error?.message,
-      statusCode: error?.statusCode,
+  } catch (cause) {
+    // Network errors or unexpected SDK exceptions.
+    console.error("RESEND_REQUEST_EXCEPTION", {
+      name: cause?.name,
+      message: cause?.message,
+      statusCode: cause?.statusCode,
       errorCode,
     });
 
     throw createEmailError(
-      "Email provider request failed. Check Resend configuration and provider logs.",
+      "The email provider request failed. Check Resend configuration and logs.",
+      errorCode,
+      502,
+      cause,
+    );
+  }
+
+  const { data, error } = result ?? {};
+
+  if (error) {
+    // Preserve the provider's actual error in server logs.
+    console.error("RESEND_PROVIDER_ERROR", {
+      name: error.name,
+      message: error.message,
+      statusCode: error.statusCode,
+      errorCode,
+    });
+
+    throw createEmailError(
+      "The email provider rejected the message. Check the provider error in the server logs.",
+      errorCode,
+      502,
+      error,
+    );
+  }
+
+  if (!data?.id) {
+    console.error("RESEND_MISSING_EMAIL_ID", { errorCode });
+
+    throw createEmailError(
+      "The email provider did not confirm the email request.",
       errorCode,
       502,
     );
   }
+
+  // A successful API response means the provider accepted the request.
+  // It does not guarantee delivery to the recipient's inbox.
+  return { id: data.id };
 }
 
 export async function sendVerificationEmail(email, code) {
   const safeCode = escapeHtml(code);
 
-  await sendEmail({
+  return sendEmail({
     to: email,
     subject: "Verify your RelayOps account",
     text: [
@@ -120,7 +135,7 @@ export async function sendTeamInvitationEmail(email, teamName, role) {
   const safeRole = escapeHtml(role);
   const safeOrigin = escapeHtml(env.frontendOrigin);
 
-  await sendEmail({
+  return sendEmail({
     to: email,
     subject: `You're invited to ${teamName} on RelayOps`,
     text: [
@@ -132,8 +147,16 @@ export async function sendTeamInvitationEmail(email, teamName, role) {
     html: `
       <div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;padding:24px">
         <h1>Workspace invitation</h1>
-        <p>You have been invited to <strong>${safeTeamName}</strong> on RelayOps as <strong>${safeRole}</strong>.</p>
-        <p>Create a RelayOps account using this email address, then verify your email. Your workspace invitation will be accepted automatically after verification.</p>
+        <p>
+          You have been invited to
+          <strong>${safeTeamName}</strong> on RelayOps as
+          <strong>${safeRole}</strong>.
+        </p>
+        <p>
+          Create a RelayOps account using this email address, then verify
+          your email. Your workspace invitation will be accepted
+          automatically after verification.
+        </p>
         <p><a href="${safeOrigin}">Open RelayOps</a></p>
       </div>
     `,
